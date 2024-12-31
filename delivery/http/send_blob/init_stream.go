@@ -4,19 +4,12 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
 
 func (h *sendblobHandle) InitStream(ctx *gin.Context) {
 	// Nâng cấp kết nối WebSocket
