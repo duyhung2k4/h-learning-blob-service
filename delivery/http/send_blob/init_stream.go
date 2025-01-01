@@ -1,78 +1,56 @@
 package sendblobhandle
 
 import (
+	"app/generated/grpc/servicegrpc"
+	constant "app/internal/constants"
+	httpresponse "app/pkg/http_response"
+	logapp "app/pkg/log"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"os/exec"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func (h *sendblobHandle) InitStream(ctx *gin.Context) {
-	// Nâng cấp kết nối WebSocket
+	uuid := ctx.Query("uuid")
+	ipQuantity360p := ctx.Query("quantity_360p")
+	ipMergeBlob := ctx.Query("ip_merge_blob")
+
 	conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
 	if err != nil {
 		fmt.Println("Error upgrading connection:", err)
+		httpresponse.InternalServerError(ctx, err)
+		logapp.Logger("up-connection", err.Error(), constant.ERROR_LOG)
 		return
 	}
 	defer conn.Close()
 
-	// Tạo pipe giao tiếp với ffmpeg
-	inputReader, inputWriter := io.Pipe()
-	outputReader, outputWriter := io.Pipe()
-
-	// Cấu hình ffmpeg để xử lý liên tục
-	cmd := exec.Command("ffmpeg",
-		"-f", "webm", // Định dạng đầu vào là WebM
-		"-i", "pipe:0", // Nhận từ stdin
-		"-f", "webm", // Định dạng đầu ra là WebM
-		"-vcodec", "libvpx", // Bộ mã hóa video VP8
-		"-s", "256x144", // Chuyển đổi độ phân giải video xuống 480p (854x480)
-		"-acodec", "libopus", // Bộ mã hóa âm thanh Opus
-		"-b:a", "128k", // Giữ bitrate âm thanh ở mức 64 kbps (âm thanh giữ nguyên chất lượng)
-		"pipe:1", // Ghi ra stdout
-	)
-
-	cmd.Stdin = inputReader
-	cmd.Stdout = outputWriter
-	cmd.Stderr = os.Stderr
-
-	// Chạy ffmpeg trong goroutine (chỉ khởi tạo một lần)
-	err = cmd.Start()
+	// quantity-grpc
+	log.Println("Quantity: ", ipQuantity360p)
+	log.Println("Merge blob: ", ipMergeBlob)
+	connQuantityGrpc, err := grpc.NewClient(ipQuantity360p, grpc.WithInsecure())
 	if err != nil {
-		log.Fatalf("Lỗi khi khởi động ffmpeg: %v", err)
+		log.Fatalf("did not connect: %v", err)
+		httpresponse.InternalServerError(ctx, err)
+		logapp.Logger("connection-quantity-grpc", err.Error(), constant.ERROR_LOG)
+		return
 	}
-	defer cmd.Wait()
+	grpcClientQuantity := servicegrpc.NewQuantityServiceClient(connQuantityGrpc)
 
-	// Goroutine đọc dữ liệu từ ffmpeg và gửi qua WebSocket
-	go func() {
-		defer outputReader.Close()
-		buffer := make([]byte, 4096)
-		for {
-			n, err := outputReader.Read(buffer)
-			if err == io.EOF {
-				log.Println("Kết thúc luồng đầu ra từ ffmpeg")
-				break
-			}
-			if err != nil {
-				log.Printf("Lỗi khi đọc từ ffmpeg: %v", err)
-				break
-			}
+	ctxGrpc := metadata.NewOutgoingContext(ctx, metadata.New(map[string]string{
+		"ip_merge_blob": ipMergeBlob,
+		"uuid":          uuid,
+	}))
+	stream, err := grpcClientQuantity.SendBlobQuantity(ctxGrpc)
 
-			// Gửi dữ liệu xử lý qua WebSocket
-			// Sử dụng BinaryMessage nếu cần
-			err = conn.WriteMessage(websocket.BinaryMessage, buffer[:n])
-			if err != nil {
-				log.Printf("Lỗi khi gửi dữ liệu qua WebSocket: %v", err)
-				break
-			}
-		}
-	}()
+	if err != nil {
+		httpresponse.InternalServerError(ctx, err)
+		logapp.Logger("stream-quantity", err.Error(), constant.ERROR_LOG)
+		return
+	}
 
-	// Nhận dữ liệu liên tục từ WebSocket và gửi vào ffmpeg
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -80,16 +58,13 @@ func (h *sendblobHandle) InitStream(ctx *gin.Context) {
 			break
 		}
 
-		// Kiểm tra kích thước và ghi dữ liệu vào pipe
-		log.Println("send: ", len(data))
+		err = stream.Send(&servicegrpc.SendBlobQuantityRequest{
+			Uuid: uuid,
+			Blob: data,
+		})
 
-		// Kiểm tra xem dữ liệu có hợp lệ trước khi ghi
-		if len(data) > 0 {
-			_, err = inputWriter.Write(data)
-			if err != nil {
-				log.Printf("Lỗi khi ghi dữ liệu vào ffmpeg: %v", err)
-				break
-			}
+		if err != nil {
+			log.Println("Error send: ", err)
 		}
 	}
 }

@@ -14,7 +14,6 @@ type sendblobHandle struct {
 
 type SendblobHandle interface {
 	InitStream(ctx *gin.Context)
-	InitStreamTest(ctx *gin.Context)
 }
 
 func NewHandle() SendblobHandle {
@@ -31,12 +30,5 @@ func Register(r *gin.Engine) {
 		Endpoint:   "blob-stream/init-stream",
 		Middleware: []gin.HandlerFunc{},
 		Handle:     handle.InitStream,
-	})
-
-	routerconfig.AddRouter(r, routerconfig.RouterConfig{
-		Method:     constant.GET_HTTP,
-		Endpoint:   "blob-stream/init-stream-test",
-		Middleware: []gin.HandlerFunc{},
-		Handle:     handle.InitStreamTest,
 	})
 }
