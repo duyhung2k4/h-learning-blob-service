@@ -1,7 +1,7 @@
 package sendblobhandle
 
 import (
-	"app/generated/grpc/servicegrpc"
+	"app/generated/proto/servicegrpc"
 	constant "app/internal/constants"
 	httpresponse "app/pkg/http_response"
 	logapp "app/pkg/log"
